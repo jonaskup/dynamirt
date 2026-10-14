@@ -24,7 +24,7 @@ extensions = ["sphinx.ext.autodoc", "sphinx.ext.autosummary", "sphinx.ext.napole
 # Tutorial notebooks are rendered with their saved outputs and never executed
 # during the build. Re-run them manually in Jupyter to update the docs.
 nb_execution_mode = "off"
-myst_enable_extensions = ["dollarmath", "deflist"]
+myst_enable_extensions = ["dollarmath", "deflist", "attrs_block"]
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', '_readme.md', 'Thumbs.db', '.DS_Store', '**.ipynb_checkpoints']
@@ -47,11 +47,17 @@ viewcode_follow_imported_members = True
 html_theme = 'sphinx_book_theme'
 html_static_path = ['_static']
 html_title = 'dynamirt'
+html_css_files = ['custom.css']
 html_theme_options = {
     "home_page_in_toc": True,
     "repository_url": "https://github.com/JonasKup/dynamirt",
     "repository_provider": "github",
     "use_repository_button": True,
+    "logo": {
+        "image_light": "../imgs/dynamirt_text_logo_bright_bg.png",
+        "image_dark": "../imgs/dynamirt_text_logo_dark_bg.png",
+        "alt_text": "dynamirt",
+    },
 }
 
 

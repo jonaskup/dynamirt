@@ -1,10 +1,16 @@
-# dynamirt 🧨
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/JonasKup/dynamirt/main/imgs/dynamirt_text_logo_dark_bg.png">
+    <img alt="dynamirt" width="420" src="https://raw.githubusercontent.com/JonasKup/dynamirt/main/imgs/dynamirt_text_logo_bright_bg.png">
+  </picture>
+</p>
+<!-- logo-end -->
 
 **dynamirt** is a Python/NumPyro package for Bayesian static and longitudinal
 multidimensional [item response theory](https://en.wikipedia.org/wiki/Item_response_theory) (MIRT). 
 It provides an interface to the most common IRT measurement models and lets you freely specify the functional 
 form of the latent construct. 
-The built-ins (GPs, HSGPs) make it geared toward repeated binary
+The built-ins (Gaussian processes (GPs) and Hilbert space approximations (HSGPs)) make it geared toward repeated binary
 or ordinal item responses collected at irregular times, including ragged
 panel and ecological momentary assessment (EMA) data where respondents have different numbers and schedules of
 observations.

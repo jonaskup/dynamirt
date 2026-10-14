@@ -1,0 +1,10 @@
+/* The logo replaces the landing-page title visually; keep the h1 for
+   page titles, navigation, and screen readers. */
+.landing-page > h1 {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+}
