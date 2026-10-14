@@ -48,6 +48,7 @@ html_theme = 'sphinx_book_theme'
 html_static_path = ['_static']
 html_title = 'dynamirt'
 html_css_files = ['custom.css']
+html_favicon = '../imgs/favicon.ico'
 html_theme_options = {
     "home_page_in_toc": True,
     "repository_url": "https://github.com/JonasKup/dynamirt",
