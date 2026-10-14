@@ -17,8 +17,8 @@ observations.
 
 <table>
   <tr>
-    <td><img src="imgs/simulated_item_responses.svg" width="400" alt="Item Response Pattern"></td>
-    <td><img src="imgs/recovered_trajectories.svg" width="400" alt="Latent Trajectories"></td>
+    <td><img src="https://raw.githubusercontent.com/JonasKup/dynamirt/main/imgs/simulated_item_responses.svg" width="400" alt="Item Response Pattern"></td>
+    <td><img src="https://raw.githubusercontent.com/JonasKup/dynamirt/main/imgs/recovered_trajectories.svg" width="400" alt="Latent Trajectories"></td>
   </tr>
 </table>
 
