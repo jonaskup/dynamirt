@@ -45,6 +45,7 @@ viewcode_follow_imported_members = True
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = 'sphinx_book_theme'
+html_context = {"default_mode": "light"}
 html_static_path = ['_static']
 html_title = 'dynamirt'
 html_css_files = ['custom.css']
