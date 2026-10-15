@@ -39,19 +39,19 @@ def fit_simulated(model_type, replication, settings=SMALL, output=None):
         model, responses, fitting_seed, settings, diagnostics=output is not None)
     # These raw sites equal the parameters for the unpooled, iid specification.
     truth = {"intercept": intercept, "theta": theta}
-    draws = {"intercept": np.asarray(raw["item_intercept_raw"])[:, 0, :, 0],
-             "theta": np.asarray(raw["residuals_raw"])[:, :, 0, 0]}
+    draws = {"intercept": np.asarray(raw["measurement.intercept"]),
+             "theta": np.asarray(raw["latent.residuals.coef.raw"])[:, :, 0, 0]}
     if model_type != "1PL":
         truth["discrimination"] = discrimination
         draws["discrimination"] = np.asarray(raw["loadings.full"])[:, :, 0]
     if model_type in ("3PL", "4PL"):
         truth["lower_asymptote"] = lower
-        draws["lower_asymptote"] = np.asarray(raw["lower_asymptote"])
+        draws["lower_asymptote"] = np.asarray(raw["measurement.lower_asymptote"])
     if model_type == "4PL":
         truth["upper_asymptote"] = upper
         # The sampled gap is a fraction of the remaining probability range.
         lower_draws = draws["lower_asymptote"]
-        draws["upper_asymptote"] = lower_draws + (1 - lower_draws) * np.asarray(raw["asymptote_gap"])
+        draws["upper_asymptote"] = lower_draws + (1 - lower_draws) * np.asarray(raw["measurement.upper_asymptote_fraction"])
     if output is not None:
         save_estimates(model_type, replication, truth, draws, metadata, simulation_seed, output, settings)
     return truth, draws, divergences

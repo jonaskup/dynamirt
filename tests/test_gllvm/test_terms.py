@@ -9,10 +9,10 @@ from tinygp import kernels
 import numpyro
 import numpyro.distributions as dist
 
-from dynamirt.gllvm._context import _Context
+from dynamirt.gllvm.context import ModelContext
 from dynamirt.gllvm.terms.linear import Linear
 from dynamirt.gllvm.terms.discrete import AR1, GRW
-from dynamirt.gllvm.terms.continuous import HSGP, ExactGP
+from dynamirt.gllvm.terms.continuous import HSGP, GP
 from dynamirt.gllvm.parameters import Param
 
 @pytest.fixture
@@ -22,8 +22,8 @@ def ctx():
                   "g": np.repeat([0, 1, 2], 20),
                   "t": np.tile(np.arange(20), 3),
                   "one_": np.array([1.0]),
-                  "row_": np.arange(n_obs)}
-    return _Context(None, covariates, n_obs, n_var=4, n_latent=2)
+                  "obs_": np.arange(n_obs)}
+    return ModelContext(None, covariates, n_obs, n_var=4, n_latent=2, index_sizes={"g": 3, "t": 20})
 
 def trace_term(term, ctx, n_vars, seed=0):
     with numpyro.handlers.trace() as tr, numpyro.handlers.seed(rng_seed=seed):
@@ -43,12 +43,12 @@ def trace_term(term, ctx, n_vars, seed=0):
     (HSGP("f", "x", kernel="Matern", ell=3.0, m=8), False),
     (HSGP("f", "x", kernel="Matern", ell=3.0, m=8, varies_over_variables=False), True),
 
-    (ExactGP("gp", "x",
+    (GP("gp", "x",
              kernel=lambda p: p["amplitude"] ** 2 * kernels.Matern52(p["length"]),
              params={"amplitude": Param(1.0),
                      "length": Param(dist.InverseGamma(5, 5))},
              group_by="g"), False),
-    (ExactGP("gp", "x",
+    (GP("gp", "x",
              kernel=lambda p: p["amplitude"] ** 2 * kernels.Matern52(p["length"]),
              params={"amplitude": Param(1.0),
                      "length": Param(dist.InverseGamma(5, 5))}), False),

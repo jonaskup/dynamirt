@@ -28,7 +28,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-jax.config.update("jax_enable_x64", True) # necessary for ExactGP underflow
+jax.config.update("jax_enable_x64", True) # necessary for GP underflow
 
 import numpyro.distributions as dist
 from numpyro.infer import SVI, Trace_ELBO, Predictive
@@ -43,7 +43,7 @@ from dynamirt.gllvm.families import Gaussian
 from dynamirt.gllvm.parameters import Param
 from dynamirt.gllvm.terms.linear import Linear
 from dynamirt.gllvm.terms.discrete import AR1, GRW
-from dynamirt.gllvm.terms.continuous import HSGP, ExactGP
+from dynamirt.gllvm.terms.continuous import HSGP, GP
 
 
 N_TIME = 100
@@ -60,7 +60,7 @@ TERMS = {
     "grw": (GRW("trend", order_by="t", group_by="g", scale=Param(dist.HalfNormal(0.2))), 0.8),
     "ar1": (AR1("trend", order_by="t", group_by="g", scale=Param(dist.HalfNormal(0.2))), 0.4),
     "hsgp": (HSGP("trend", "t_", kernel="Matern", nu=1.5, ell=2.0, m=15, group_by="g"), 0.8),
-    "exact_gp": (ExactGP("trend", "t_",
+    "gp": (GP("trend", "t_",
                          kernel=lambda p: p["amplitude"] ** 2 * kernels.Matern52(p["length"]),
                          params={"amplitude": Param(1.0),
                                  "length": Param(dist.InverseGamma(5, 5))},
@@ -95,6 +95,7 @@ def responses(covariates):
 
 def build_model(covariates, latent_term):
     return partial(gllvm,
+                   index_sizes={"g": N_GROUPS, "t": N_TIME},
                    covariates=covariates,
                    family=Gaussian(),
                    n_latent=1,
@@ -170,6 +171,7 @@ def test_fit_tracks_the_trend(covariates, responses, name):
 def test_stacked_terms_compose(covariates, responses):
     """Several terms in both regressions at once."""
     model = partial(gllvm,
+                    index_sizes={"g": N_GROUPS, "t": N_TIME},
                     covariates=covariates,
                     family=Gaussian(),
                     n_latent=1,
@@ -185,4 +187,4 @@ def test_stacked_terms_compose(covariates, responses):
     assert all(jnp.isfinite(g).all() for g in jax.tree_util.tree_leaves(init.param_info.z_grad))
 
     sites = {name for name, site in init.model_trace.items() if site["type"] == "sample"}
-    assert {"intercept_raw", "slope_raw", "wiggle_beta", "drift_innovations"} <= sites
+    assert {"item.intercept.coef.raw", "item.slope.coef.raw", "item.wiggle.basis_weights.raw", "latent.drift.innovations.raw"} <= sites

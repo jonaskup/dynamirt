@@ -66,14 +66,18 @@ def fit_simulated(model_type, replication, settings=SMALL, output=None):
     raw, divergences, metadata = fit_responses(
         model, responses, fitting_seed, settings, diagnostics=output is not None)
     name = "cutpoints" if model_type == "GRM" else "steps"
-    compact = np.asarray(raw[name + "_raw"])
-    thresholds = np.zeros((len(compact), *valid.shape))
-    thresholds[:, valid] = compact
     if model_type == "GRM":
-        # First raw value is the location; remaining raw values are log gaps.
-        thresholds[:, :, 1:] = np.exp(thresholds[:, :, 1:])
-        thresholds = np.where(valid, thresholds.cumsum(axis=-1), 0.0)
-    draws = {name: thresholds, "theta": np.asarray(raw["residuals_raw"])[:, :, 0, 0]}
+        thresholds = np.zeros((len(raw["latent.residuals.coef.raw"]), *valid.shape))
+        for count in np.unique(counts):
+            p = np.asarray(raw[f"measurement.baseline_probs_{count}"])
+            below = p.cumsum(axis=-1)[..., :-1]
+            above = p[..., ::-1].cumsum(axis=-1)[..., ::-1][..., 1:]
+            thresholds[:, counts == count, :count - 1] = np.log(below) - np.log(above)
+    else:
+        compact = np.asarray(raw[f"measurement.{name}.raw"])
+        thresholds = np.zeros((len(compact), *valid.shape))
+        thresholds[:, valid] = compact
+    draws = {name: thresholds, "theta": np.asarray(raw["latent.residuals.coef.raw"])[:, :, 0, 0]}
     if model_type != "PCM":
         draws["discrimination"] = np.asarray(raw["loadings.full"])[:, :, 0]
     if output is not None:
