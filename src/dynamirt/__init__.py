@@ -1,6 +1,6 @@
 from .api import dynamirt
 from .fit import fit_mcmc, fit_svi
-from .scoring import log_loss
+from .scoring import log_loss, ranked_probability_score
 from .diagnostics import plot_item_curves, plot_loadings, plot_trajectories, item_curves
 
 from .gllvm.terms.linear import Linear
@@ -13,7 +13,7 @@ from .loadings import q_matrix
 from .gllvm.parameters import Param, Pool
 
 __all__ = [
-    "dynamirt", "fit_mcmc", "fit_svi", "log_loss",
+    "dynamirt", "fit_mcmc", "fit_svi", "log_loss", "ranked_probability_score",
     "Linear", "GRW", "AR1", "GP", "HSGP",
     "CustomTerm", "ModelContext",
     "Full", "Fixed", "Confirmatory", "Sparsity",

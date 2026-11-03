@@ -43,6 +43,65 @@ def log_loss(
         Use .mean() for an overall cell-weighted score or .mean("obs") for
         per-item scores.
     """
+    values, _, log_mean_p, coords = _scoring_inputs(
+        result, responses, posterior, num_samples
+    )
+    observed = ~np.isnan(values)
+    categories = np.where(observed, values, 0).astype(int)
+    losses = -np.asarray(jnp.take_along_axis(log_mean_p, categories[..., None], axis=-1))[..., 0]
+    losses = np.where(observed, losses, np.nan)
+    return xr.DataArray(losses, dims=("obs", "item"), coords=coords, name="log_loss")
+
+
+def ranked_probability_score(
+    result: FitResult,
+    responses=None,
+    *,
+    posterior: xr.Dataset | xr.DataTree | None = None,
+    num_samples: int | None = None,
+) -> xr.DataArray:
+    """Normalized ranked probability score (RPS) of each supplied answer.
+
+    Average category probabilities over posterior draws, then compare their
+    cumulative probabilities with the observed category. For an item with K
+    categories, the score is the sum of squared differences at thresholds
+    0,...,K-2, divided by K-1. Padded categories are excluded. Lower is better;
+    scores range from zero to one. For binary items this is the Brier score.
+
+    Args:
+        result: Fitted dynamirt model.
+        responses: Numeric array in the same shape and positional row/item
+            order as result.responses. NaN cells are not scored. Defaults to
+            result.responses, giving training scores. For held-out scoring,
+            mask answers before fitting and supply those answers here, with
+            NaN elsewhere.
+        posterior: Optional posterior Dataset or DataTree node retaining all
+            stochastic parameters in model order. Defaults to
+            result.to_idata()["posterior"]. Reuse this argument to score
+            multiple response masks using the same draws.
+        num_samples: SVI draw count when posterior is omitted (default 500).
+            Leave None for MCMC or an explicit posterior.
+
+    Returns:
+        DataArray named rps with dimensions (obs, item), observation covariates
+        as auxiliary coordinates, and NaN at unscored cells. Use .mean() for
+        an overall cell-weighted score or .mean("obs") for per-item scores.
+    """
+    values, counts, log_mean_p, coords = _scoring_inputs(
+        result, responses, posterior, num_samples
+    )
+    cumulative = np.cumsum(np.asarray(jnp.exp(log_mean_p)), axis=-1)[..., :-1]
+    thresholds = np.arange(cumulative.shape[-1])
+    valid = thresholds < counts[:, None] - 1
+    observed_cumulative = values[..., None] <= thresholds
+    squared_error = (cumulative - observed_cumulative) ** 2
+    scores = np.where(valid, squared_error, 0).sum(axis=-1) / (counts - 1)
+    scores = np.where(~np.isnan(values), scores, np.nan)
+    return xr.DataArray(scores, dims=("obs", "item"), coords=coords, name="rps")
+
+
+def _scoring_inputs(result, responses, posterior, num_samples):
+    """Validate answers and replay posterior-averaged probabilities and labels."""
     values = np.asarray(result.responses if responses is None else responses)
     if values.shape != np.shape(result.responses):
         raise ValueError("responses must have the same shape as the fitted responses")
@@ -70,18 +129,13 @@ def log_loss(
     log_mean_p = logsumexp(log_p, axis=tuple(range(len(sample_dims)))) - jnp.log(
         np.prod(sample_shape)
     )
-    observed = ~np.isnan(values)
-    categories = np.where(observed, values, 0).astype(int)
-    losses = -np.asarray(jnp.take_along_axis(log_mean_p, categories[..., None], axis=-1))[..., 0]
-    losses = np.where(observed, losses, np.nan)
-
     coords = {
         dim: np.asarray(posterior.coords.get(dim, result.coords.get(dim, np.arange(size))))
         for dim, size in (("obs", n_obs), ("item", n_items))
     }
     for name, covariate in result.covariates.items():
         if np.shape(covariate) == (n_obs,):
-            if name in {"obs", "item", "log_loss"}:
+            if name in {"obs", "item", "log_loss", "rps"}:
                 raise ValueError(f"Covariate name conflicts with score coordinates: {name!r}")
             coords[name] = ("obs", np.asarray(covariate))
-    return xr.DataArray(losses, dims=("obs", "item"), coords=coords, name="log_loss")
+    return values, counts, log_mean_p, coords
