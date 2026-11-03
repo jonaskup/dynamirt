@@ -74,6 +74,16 @@ Plots
    dynamirt.item_curves
    dynamirt.plot_item_curves
 
+Scoring
+-------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   dynamirt.log_loss
+   dynamirt.ranked_probability_score
+
 Experimental calibration
 ------------------------
 
