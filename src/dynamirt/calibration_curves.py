@@ -6,10 +6,10 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 import numpy as np
-from numpyro import handlers
 import xarray as xr
 
 from .fit import FitResult
+from ._replay import _replay_category_log_probs
 
 
 def calibration(
@@ -61,8 +61,6 @@ def calibration(
             n_obs=n_obs, n_var=n_items,
         )
 
-    key = jax.random.key(0)
-    trace = handlers.trace(handlers.seed(model, key)).get_trace()
     if posterior is None:
         posterior = result.to_idata(num_samples=num_samples)["posterior"]
     elif num_samples is not None:
@@ -70,26 +68,14 @@ def calibration(
     if isinstance(posterior, xr.DataTree):
         posterior = posterior.to_dataset()
 
-    sites = [name for name, site in trace.items()
-             if site["type"] == "sample" and name != "Y"]
-    missing = set(sites) - set(posterior.data_vars)
-    if missing:
-        raise ValueError(f"Posterior is missing model parameters: {sorted(missing)}")
-    sample_dims = [d for d in ("chain", "draw", "sample") if d in posterior.dims]
-    sample_shape = tuple(posterior.sizes[d] for d in sample_dims)
+    log_probs, sample_dims = _replay_category_log_probs(
+        model, posterior, jax.random.key(0)
+    )
+    sample_shape = log_probs.shape[:-3]
     n_draws = int(np.prod(sample_shape))
-    draws = {}
-    for name in sites:
-        values = posterior[name].transpose(*sample_dims, ...).values
-        draws[name] = jnp.asarray(values.reshape((n_draws,) + values.shape[len(sample_dims):]))
-
-    def probability(draw):
-        replay = handlers.substitute(model, draw)
-        response_dist = handlers.trace(handlers.seed(replay, key)).get_trace()["Y"]["fn"]
-        support = response_dist.enumerate_support(expand=False)
-        return jnp.moveaxis(jnp.exp(response_dist.log_prob(support)), 0, -1)
-
-    probabilities = np.asarray(jax.vmap(probability)(draws))
+    probabilities = np.asarray(jnp.exp(log_probs)).reshape(
+        n_draws, *log_probs.shape[-3:]
+    )
     n_categories = probabilities.shape[-1]
     category_counts = np.broadcast_to(result.model._dynamirt_n_cat, (n_items,))
     valid_category = np.arange(n_categories) < category_counts[:, None]

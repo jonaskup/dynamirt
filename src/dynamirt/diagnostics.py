@@ -9,9 +9,9 @@ import numpy as np
 import xarray as xr
 import jax
 import jax.numpy as jnp
-from numpyro import handlers
 
 from .fit import FitResult
+from ._replay import _replay_category_log_probs
 
 
 def plot_trajectories(
@@ -294,40 +294,17 @@ def item_curves(
             latent_regression=[grid_term],
         )
 
-    key = jax.random.key(0)
-    traced = handlers.trace(handlers.seed(grid_model, key)).get_trace()
-    sites = [name for name, site in traced.items()
-             if site["type"] == "sample" and name != "Y"]
-    missing = set(sites) - set(posterior.data_vars)
-    
-    if missing:
-        raise ValueError(f"Posterior is missing measurement parameters: {sorted(missing)}")
-    
-    sample_dims = [d for d in ("chain", "draw", "sample") if d in posterior.dims]
-    sample_shape = tuple(posterior.sizes[d] for d in sample_dims)
-    n_draws = int(np.prod(sample_shape))
-    draws = {}
-    
-    for name in sites:
-        values = posterior[name].transpose(*sample_dims, ...).values
-        draws[name] = jnp.asarray(values.reshape((n_draws,) + values.shape[len(sample_dims):]))
-
-    def probs_for_draw(draw, draw_key):
-        substituted = handlers.substitute(grid_model, draw)
-        response_dist = handlers.trace(handlers.seed(substituted, draw_key)).get_trace()["Y"]["fn"]
-        support = response_dist.enumerate_support(expand=False)
-        return jnp.moveaxis(jnp.exp(response_dist.log_prob(support)), 0, -1)
-
-    probabilities = np.asarray(jax.vmap(probs_for_draw)(
-        draws, jax.random.split(key, n_draws)
-    ))
+    log_probs, sample_dims = _replay_category_log_probs(
+        grid_model, posterior, jax.random.key(0)
+    )
+    probabilities = np.asarray(jnp.exp(log_probs))
     n_cat = probabilities.shape[-1]
     counts = np.broadcast_to(result.model._dynamirt_n_cat, (n_items,))
     
     return xr.Dataset(
         {
             "probability": ((*sample_dims, "point", "item", "category"),
-                            probabilities.reshape(*sample_shape, len(theta), n_items, n_cat)),
+                            probabilities),
             "theta": (("point", "latent"), theta),
             "valid_category": (("item", "category"), np.arange(n_cat) < counts[:, None]),
         },
