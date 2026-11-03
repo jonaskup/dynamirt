@@ -8,7 +8,7 @@ markers = ["slow: fits models using SVI or MCMC"]
 
 [project]
 name = "dynamirt"
-version = "0.2.0"
+version = "0.2.1"
 authors = [
   { name="Jonas Kupschus", email="jonas.kupschus@rwth-aachen.de" },
 ]
