@@ -26,21 +26,21 @@ This example plots the items characteristic curves for the four items on the pos
 
 ```python
 import matplotlib.pyplot as plt
-from dynamirt import item_curves, plot_item_curves
+from dynamirt import response_curves, plot_response_curves
 
-icc = item_curves(fit, posterior=idata["posterior"], latent=["positive_affect"])
+icc = response_curves(fit, posterior=idata["posterior"], latent=["positive_affect"])
 
 fig, ax = plt.subplots()
 
 for item in ["cheerful", "energetic", "interested", "relaxed"]:
-    plot_item_curves(icc, item=item, ax=ax)
+    plot_response_curves(icc, item=item, ax=ax)
 
 ```
-The example above considers only the positive affect latent conditioned on negative_affect == 0. This is not an issue here because we specified a simple loading structure (each item loads either onto the positive or negative affect latent). For a two-dimensional model that also includes some cross loadings, we can visualize the decision boundaries in the latent space instead. The {py:func}`item_curves <dynamirt.item_curves>` function varies up to two latents, holding any remaining dimensions at zero.
+The example above considers only the positive affect latent conditioned on negative_affect == 0. This is not an issue here because we specified a simple loading structure (each item loads either onto the positive or negative affect latent). For a two-dimensional model that also includes some cross loadings, we can visualize the decision boundaries in the latent space instead. The {py:func}`response_curves <dynamirt.response_curves>` function varies up to two latents, holding any remaining dimensions at zero.
 
 ```python
-icc = item_curves(fit, posterior=idata["posterior"], latent=["positive_affect", "negative_affect"])
-plot_item_curves(icc, item="cheerful")
+icc = response_curves(fit, posterior=idata["posterior"], latent=["positive_affect", "negative_affect"])
+plot_response_curves(icc, item="cheerful")
 ```
 
 Documentation on item curves in the presence of differential item functioning to be added.

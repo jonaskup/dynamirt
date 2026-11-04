@@ -71,8 +71,8 @@ Plots
 
    dynamirt.plot_trajectories
    dynamirt.plot_loadings
-   dynamirt.item_curves
-   dynamirt.plot_item_curves
+   dynamirt.response_curves
+   dynamirt.plot_response_curves
 
 Scoring
 -------
