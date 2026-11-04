@@ -2,7 +2,7 @@ from .api import dynamirt
 from .gllvm.model import GLLVM
 from .fit import fit_mcmc, fit_svi
 from .scoring import log_loss, ranked_probability_score
-from .diagnostics import plot_item_curves, plot_loadings, plot_trajectories, item_curves
+from .diagnostics import response_curves, plot_response_curves, plot_loadings, plot_trajectories
 
 from .gllvm.terms.linear import Linear
 from .gllvm.terms.custom import CustomTerm
@@ -20,5 +20,5 @@ __all__ = [
     "Full", "Fixed", "Confirmatory", "Sparsity",
     "q_matrix",
     "Param", "Pool",
-    "plot_item_curves", "plot_loadings", "plot_trajectories", "item_curves"
+    "response_curves", "plot_response_curves", "plot_loadings", "plot_trajectories"
 ]

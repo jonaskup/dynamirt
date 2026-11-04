@@ -52,8 +52,8 @@ def GLLVM(
     Returns:
         A model callable ``model(responses, covariates, ...)`` for
         ``fit_mcmc`` and ``fit_svi``, with semantic ArviZ dimensions and
-        latent scores recorded as ``theta``. IRT-specific item-curve
-        metadata is not attached.
+        latent scores recorded as ``theta``. Category counts are copied from
+        ``family.n_cat`` when available.
 
     Raises:
         ValueError: If no latent terms are supplied.
@@ -88,6 +88,8 @@ def GLLVM(
     }
 
     model._dynamirt_n_latent = n_latent
+    if hasattr(family, "n_cat"):
+        model._dynamirt_n_cat = family.n_cat
 
     return model
 

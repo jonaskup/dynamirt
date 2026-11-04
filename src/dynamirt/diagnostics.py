@@ -1,4 +1,4 @@
-"""Posterior plots and conditional item-response probabilities."""
+"""Posterior plots and conditional response probabilities and means."""
 
 from collections.abc import Mapping, Sequence
 
@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 
 from .fit import FitResult
-from ._replay import _replay_category_log_probs
+from ._replay import _replay_category_log_probs, _replay_conditional_means
+from numpyro import handlers
 
 
 def plot_trajectories(
@@ -206,9 +207,10 @@ def plot_loadings(
     return ax
 
 
-def item_curves(
+def response_curves(
     result: FitResult,
     *,
+    statistic: str = "auto",
     covariates: Mapping[str, object] | None = None,
     latent: str | int | Sequence[str | int] | None = None,
     theta_range: tuple[float, float] = (-3, 3),
@@ -216,12 +218,16 @@ def item_curves(
     posterior: xr.Dataset | xr.DataTree | None = None,
     num_samples: int | None = None,
 ) -> xr.Dataset:
-    """Evaluate conditional category probabilities on a one- or two-factor grid.
-    I.e., get item characteristic curves/item response functions for a model
-    with up to two latent dimensions.
+    """Evaluate conditional response probabilities or means on a latent grid.
+    Vary one or two latent dimensions, holding other dimensions at zero.
 
     Args:
-        result: FitResult from a model built with dynamirt.
+        result: FitResult from a model built with dynamirt or GLLVM.
+        statistic: "auto" uses probabilities for distributions with enumerable
+            discrete support, and conditional means otherwise. Explicit
+            "probability" or "mean" overrides this choice. Means require an
+            implemented distribution mean; ordinal means use numeric category
+            scores. Undefined means are propagated.
         covariates: Values required by the measurement model, including DIF.
             Scalars broadcast across the theta grid; vectors follow its point
             order. Use the fitted coding/scaling and group indices. Defaults
@@ -238,7 +244,7 @@ def item_curves(
             the conversion default (500). Leave None for MCMC or posterior.
 
     Returns:
-        Dataset with probability ``(*sample_dims, point, item, category)``,
+        For probabilities, a Dataset with probability ``(*sample_dims, point, item, category)``,
         theta (point, latent), and valid_category (item, category). Sampling
         dimensions and coordinate labels are retained. The varied_latent
         attribute records the grid axes in order. Invalid categories have
@@ -246,9 +252,15 @@ def item_curves(
         evaluated at the supplied covariates. Latent terms are replaced by the
         theta grid. These are conditional slices, not averages over the other
         latent dimensions or training covariates. The supplied profile is not
-        stored in the output. DIF terms must support evaluation on this grid;
+        stored in the output. For means, ``mean`` has dimensions
+        ``(*sample_dims, point, item)`` and category variables are omitted.
+        These are conditional expectations, not future response draws.
+        The resolved statistic is recorded in the Dataset attributes.
+        DIF terms must support evaluation on this grid;
         this does not provide GP conditioning at new inputs.
     """
+    if statistic not in ("auto", "probability", "mean"):
+        raise ValueError("statistic must be 'auto', 'probability', or 'mean'")
     if posterior is None:
         posterior = result.to_idata(num_samples=num_samples)["posterior"]
     elif num_samples is not None:
@@ -294,33 +306,43 @@ def item_curves(
             latent_regression=[grid_term],
         )
 
-    log_probs, sample_dims = _replay_category_log_probs(
-        grid_model, posterior, jax.random.key(0)
-    )
-    probabilities = np.asarray(jnp.exp(log_probs))
-    n_cat = probabilities.shape[-1]
-    counts = np.broadcast_to(result.model._dynamirt_n_cat, (n_items,))
-    
+    # Inspect the actual distribution so custom family callables work too.
+    response_dist = handlers.trace(handlers.seed(grid_model, jax.random.key(0))).get_trace()["Y"]["fn"]
+    enumerable = response_dist.support.is_discrete and response_dist.has_enumerate_support
+    if statistic == "auto":
+        statistic = "probability" if enumerable else "mean"
+    if statistic == "probability" and not enumerable:
+        raise ValueError("Probability curves require enumerable finite-category responses")
+
+    data = {"theta": (("point", "latent"), theta)}
+    category_coords = {}
+    if statistic == "probability":
+        log_probs, sample_dims = _replay_category_log_probs(grid_model, posterior, jax.random.key(0))
+        probabilities = np.asarray(jnp.exp(log_probs))
+        n_cat = probabilities.shape[-1]
+        counts = np.broadcast_to(getattr(result.model, "_dynamirt_n_cat", n_cat), (n_items,))
+        data["probability"] = ((*sample_dims, "point", "item", "category"), probabilities)
+        data["valid_category"] = (("item", "category"), np.arange(n_cat) < counts[:, None])
+        category_coords["category"] = np.arange(n_cat)
+    else:
+        means, sample_dims = _replay_conditional_means(grid_model, posterior, jax.random.key(0))
+        data["mean"] = ((*sample_dims, "point", "item"), np.asarray(means))
+
     return xr.Dataset(
-        {
-            "probability": ((*sample_dims, "point", "item", "category"),
-                            probabilities),
-            "theta": (("point", "latent"), theta),
-            "valid_category": (("item", "category"), np.arange(n_cat) < counts[:, None]),
-        },
+        data,
         coords={
             **{d: np.asarray(posterior[d]) for d in sample_dims},
             "point": np.arange(len(theta)), "latent": labels,
             "item": np.asarray(posterior.coords.get(
                 "item", result.coords.get("item", np.arange(n_items))
             )),
-            "category": np.arange(n_cat),
+            **category_coords,
         },
-        attrs={"varied_latent": selected},
+        attrs={"varied_latent": selected, "statistic": statistic},
     )
 
 
-def plot_item_curves(
+def plot_response_curves(
     curves: xr.Dataset,
     *,
     item: str | int = 0,
@@ -335,11 +357,11 @@ def plot_item_curves(
     """Plot one item's conditional response curves or a category heatmap.
 
     Args:
-        curves: Dataset returned by item_curves.
+        curves: Dataset returned by response_curves.
         item: Item coordinate label (not positional index).
         category: Category label. None shows category 1 for binary items or
             all valid categories for ordinal 1D curves. Ordinal 2D plots
-            require a category.
+            require a category. Not applicable to mean curves.
         prob: Pointwise posterior HDI mass for 1D curves. Two-dimensional
             heatmaps show posterior medians without intervals.
         ax: Optional matplotlib Axes. Titles and layout are left to the caller.
@@ -348,28 +370,35 @@ def plot_item_curves(
         fill_kwargs: Extra keyword arguments for 1D HDI bands
             (ax.fill_between), overriding alpha=0.3 and the line color.
         mesh_kwargs: Extra keyword arguments for the 2D heatmap
-            (ax.pcolormesh), overriding shading="auto", vmin=0 and vmax=1.
+            (ax.pcolormesh), overriding shading="auto"; probabilities also default to vmin=0, vmax=1.
         colorbar_kwargs: Extra keyword arguments for the 2D colorbar
-            (Figure.colorbar), overriding the probability label.
+            (Figure.colorbar), overriding the statistic label.
 
     Returns:
         Matplotlib Axes. One-dimensional lines have category labels for use
-        with ax.legend(); two-dimensional plots include a probability colorbar.
+        with ax.legend(); two-dimensional plots include a statistic colorbar.
     """
     selected = curves.attrs["varied_latent"]
-    valid = curves.category.values[curves.valid_category.sel(item=item).values]
-    if category is None:
-        if len(valid) == 2:
-            categories = [1]
-        elif len(selected) == 2:
-            raise ValueError("Select a category for a two-dimensional ordinal plot")
-        else:
-            categories = valid
+    is_mean = curves.attrs.get("statistic") == "mean" or "probability" not in curves
+    if is_mean:
+        if category is not None:
+            raise ValueError("category is not applicable to conditional mean curves")
+        categories = ["mean"]
+        values = curves["mean"].sel(item=item).expand_dims(category=categories)
     else:
-        if category not in valid:
-            raise ValueError(f"Category {category} is not valid for item {item!r}")
-        categories = [category]
-    values = curves.probability.sel(item=item, category=categories)
+        valid = curves.category.values[curves.valid_category.sel(item=item).values]
+        if category is None:
+            if len(valid) == 2:
+                categories = [1]
+            elif len(selected) == 2:
+                raise ValueError("Select a category for a two-dimensional ordinal plot")
+            else:
+                categories = valid
+        else:
+            if category not in valid:
+                raise ValueError(f"Category {category} is not valid for item {item!r}")
+            categories = [category]
+        values = curves.probability.sel(item=item, category=categories)
     sample_dims = [d for d in ("chain", "draw", "sample") if d in values.dims]
     median = values.median(sample_dims)
     if ax is None:
@@ -387,19 +416,20 @@ def plot_item_curves(
                 interval.sel(category=cat, ci_bound="upper").values,
                 **{"color": line.get_color(), "alpha": 0.3, **(fill_kwargs or {})},
             )
-        ax.set_ylim(0, 1)
-        ax.set_ylabel("Probability")
+        if not is_mean:
+            ax.set_ylim(0, 1)
+        ax.set_ylabel("Conditional mean" if is_mean else "Probability")
     else:
         y = curves.theta.sel(latent=selected[1]).values
         xs, ys = np.unique(x), np.unique(y)
         z = median.sel(category=categories[0]).values.reshape(len(xs), len(ys))
         im = ax.pcolormesh(
             xs, ys, z.T,
-            **{"shading": "auto", "vmin": 0, "vmax": 1, **(mesh_kwargs or {})},
+            **{"shading": "auto", **({} if is_mean else {"vmin": 0, "vmax": 1}), **(mesh_kwargs or {})},
         )
         ax.figure.colorbar(
             im, ax=ax,
-            **{"label": f"P(Y = {categories[0]})", **(colorbar_kwargs or {})},
+            **{"label": "E[Y | theta, x]" if is_mean else f"P(Y = {categories[0]})", **(colorbar_kwargs or {})},
         )
         ax.set_ylabel(str(selected[1]))
     ax.set_xlabel(str(selected[0]))
