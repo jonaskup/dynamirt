@@ -1,4 +1,4 @@
-from typing import Mapping, List, Callable
+from typing import Sequence, Mapping, List, Callable
 
 import numpyro
 import numpy as np
@@ -6,8 +6,11 @@ import numpy as np
 import jax.numpy as jnp
 from jax.typing import ArrayLike
 
+from functools import partial
+
 from .context import ModelContext
 from .loadings import Full
+from .families import Gaussian
 
 
 def _validate_responses(responses, discrete, n_cat=None):
@@ -19,6 +22,74 @@ def _validate_responses(responses, discrete, n_cat=None):
         raise ValueError("Responses must be integers or NaN")
     if n_cat is not None and np.any(observed & ((values < 0) | (values >= n_cat))):
         raise ValueError("Response category out of range")
+
+
+def GLLVM(
+    n_latent: int =1,
+    loadings: Callable | None =None,
+    family: Callable | None =None,
+    latent_terms: Sequence[Callable] | None =None,
+    item_terms: Sequence[Callable] | None =None,
+    index_sizes: Mapping[str, int] | None =None,
+    ) -> Callable:
+
+    """Build a generalized linear latent variable model for MCMC or SVI.
+
+    Args:
+        n_latent: Number of latent dimensions. Defaults to 1.
+        loadings: Loading-matrix factory. Defaults to unconstrained ``Full()``.
+        family: Callable ``family(linear_predictor, ctx)`` returning a
+            NumPyro distribution. Defaults to ``Gaussian()``.
+        latent_terms: Nonempty sequence of latent term callables. No iid
+            latent effects are added automatically. For example, supply
+            ``[Linear("residuals", group_by="obs_")]`` for row-level effects.
+        item_terms: Optional full-rank terms. No intercept is added
+            automatically; supply ``Linear("intercept")`` here if needed
+            and not already provided by the family.
+        index_sizes: Fixed sizes of named grouping and discrete-time axes.
+            The ``obs_`` axis is supplied automatically.
+
+    Returns:
+        A model callable ``model(responses, covariates, ...)`` for
+        ``fit_mcmc`` and ``fit_svi``, with semantic ArviZ dimensions and
+        latent scores recorded as ``theta``. IRT-specific item-curve
+        metadata is not attached.
+
+    Raises:
+        ValueError: If no latent terms are supplied.
+    """
+
+    latent_terms = [] if latent_terms is None else list(latent_terms)
+    item_terms = [] if item_terms is None else list(item_terms)
+    if not latent_terms:
+        raise ValueError("No latent terms: pass a nonempty latent_terms sequence.")
+
+    if family is None:
+        family = Gaussian()
+
+    model = partial(
+        gllvm,
+        n_latent=n_latent,
+        full_rank_regression=item_terms,
+        latent_regression=latent_terms,
+        loadings=loadings,
+        family=family,
+        latent_site_name="theta",
+        index_sizes={} if index_sizes is None else dict(index_sizes),
+    )
+
+    # ----------------- state for downstream analysis/ArviZ -----------------
+    model._dynamirt_dims = {
+        "theta": ["obs", "latent"],
+        "loadings": ["item", "latent"],
+        "Y": ["obs", "item"],
+        **{f"latent.{term.name}.contribution": ["obs", "latent"] for term in latent_terms},
+        **{f"item.{term.name}.contribution": ["obs", "item"] for term in item_terms},
+    }
+
+    model._dynamirt_n_latent = n_latent
+
+    return model
 
 
 def gllvm(
