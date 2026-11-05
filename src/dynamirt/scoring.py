@@ -111,6 +111,54 @@ def ranked_probability_score(
     return xr.DataArray(scores, dims=("obs", "item"), coords=coords, name="rps")
 
 
+def accuracy(
+    result: FitResult,
+    responses=None,
+    *,
+    posterior: xr.Dataset | xr.DataTree | None = None,
+    num_samples: int | None = None,
+    batch_size: int = 5,
+) -> xr.DataArray:
+    """Exact-category accuracy of posterior-predictive classifications.
+
+    Average category probabilities over posterior draws, then predict the
+    most probable category. Exact ties select the lowest category. For binary
+    responses, category 1 is predicted only when its probability exceeds 0.5.
+    Ordinal mistakes count equally regardless of their distance. Higher is
+    better; a mean of 1 indicates all scored answers were classified correctly.
+
+    Args:
+        result: Fitted dynamirt model with finite-category responses.
+        responses: Numeric array in the same shape and positional row/item
+            order as result.responses. NaN cells are not scored. Defaults to
+            result.responses, giving training scores. For held-out scoring,
+            mask answers before fitting and supply those answers here, with
+            NaN elsewhere.
+        posterior: Optional posterior Dataset or DataTree node retaining all
+            stochastic parameters in model order. Defaults to
+            result.to_idata()["posterior"]. Reuse this argument to score
+            multiple response masks using the same draws.
+        num_samples: SVI draw count when posterior is omitted (default 500).
+            Leave None for MCMC or an explicit posterior.
+        batch_size: Maximum total posterior draws replayed together, across
+            all chains (default 5). All selected draws are used. Reduce to 1
+            if memory is limited. This does not batch observation rows.
+
+    Returns:
+        DataArray named accuracy with dimensions (obs, item), observation
+        covariates as auxiliary coordinates, and values 1.0 for correct
+        predictions, 0.0 for incorrect predictions, and NaN at unscored cells.
+        Use .mean() for an overall cell-weighted proportion correct or
+        .mean("obs") for per-item accuracy.
+    """
+    values, _, log_mean_p, coords = _scoring_inputs(
+        result, responses, posterior, num_samples, batch_size
+    )
+    predicted = np.argmax(log_mean_p, axis=-1)
+    correct = np.where(np.isnan(values), np.nan, predicted == values)
+    return xr.DataArray(correct, dims=("obs", "item"), coords=coords, name="accuracy")
+
+
 def _scoring_inputs(result, responses, posterior, num_samples, batch_size):
     """Validate answers and replay posterior-averaged probabilities and labels."""
     if isinstance(batch_size, bool) or not isinstance(batch_size, Integral) or batch_size < 1:
@@ -166,7 +214,7 @@ def _scoring_inputs(result, responses, posterior, num_samples, batch_size):
     }
     for name, covariate in result.covariates.items():
         if np.shape(covariate) == (n_obs,):
-            if name in {"obs", "item", "log_loss", "rps"}:
+            if name in {"obs", "item", "log_loss", "rps", "accuracy"}:
                 raise ValueError(f"Covariate name conflicts with score coordinates: {name!r}")
             coords[name] = ("obs", np.asarray(covariate))
     return values, counts, log_mean_p, coords
