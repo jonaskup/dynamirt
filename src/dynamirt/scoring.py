@@ -1,7 +1,8 @@
 """Response scores on the fitted observation design."""
 
+from numbers import Integral
+
 import jax
-import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 import numpy as np
 import xarray as xr
@@ -17,6 +18,7 @@ def log_loss(
     *,
     posterior: xr.Dataset | xr.DataTree | None = None,
     num_samples: int | None = None,
+    batch_size: int = 5,
 ) -> xr.DataArray:
     """Negative log posterior-predictive probability of each supplied answer.
 
@@ -36,6 +38,10 @@ def log_loss(
             multiple response masks using the same draws.
         num_samples: SVI draw count when posterior is omitted (default 500).
             Leave None for MCMC or an explicit posterior.
+        batch_size: Maximum total posterior draws replayed together, across
+            all chains (default 5). All selected draws are used. Reduce to 1
+            if memory is limited; only batch probabilities and their running
+            sum are retained. This does not batch observation rows.
 
     Returns:
         DataArray named log_loss with dimensions (obs, item), observation
@@ -44,11 +50,11 @@ def log_loss(
         per-item scores.
     """
     values, _, log_mean_p, coords = _scoring_inputs(
-        result, responses, posterior, num_samples
+        result, responses, posterior, num_samples, batch_size
     )
     observed = ~np.isnan(values)
     categories = np.where(observed, values, 0).astype(int)
-    losses = -np.asarray(jnp.take_along_axis(log_mean_p, categories[..., None], axis=-1))[..., 0]
+    losses = -np.take_along_axis(log_mean_p, categories[..., None], axis=-1)[..., 0]
     losses = np.where(observed, losses, np.nan)
     return xr.DataArray(losses, dims=("obs", "item"), coords=coords, name="log_loss")
 
@@ -59,6 +65,7 @@ def ranked_probability_score(
     *,
     posterior: xr.Dataset | xr.DataTree | None = None,
     num_samples: int | None = None,
+    batch_size: int = 5,
 ) -> xr.DataArray:
     """Normalized ranked probability score (RPS) of each supplied answer.
 
@@ -81,6 +88,10 @@ def ranked_probability_score(
             multiple response masks using the same draws.
         num_samples: SVI draw count when posterior is omitted (default 500).
             Leave None for MCMC or an explicit posterior.
+        batch_size: Maximum total posterior draws replayed together, across
+            all chains (default 5). All selected draws are used. Reduce to 1
+            if memory is limited; only batch probabilities and their running
+            sum are retained. This does not batch observation rows.
 
     Returns:
         DataArray named rps with dimensions (obs, item), observation covariates
@@ -88,9 +99,9 @@ def ranked_probability_score(
         an overall cell-weighted score or .mean("obs") for per-item scores.
     """
     values, counts, log_mean_p, coords = _scoring_inputs(
-        result, responses, posterior, num_samples
+        result, responses, posterior, num_samples, batch_size
     )
-    cumulative = np.cumsum(np.asarray(jnp.exp(log_mean_p)), axis=-1)[..., :-1]
+    cumulative = np.cumsum(np.exp(log_mean_p), axis=-1)[..., :-1]
     thresholds = np.arange(cumulative.shape[-1])
     valid = thresholds < counts[:, None] - 1
     observed_cumulative = values[..., None] <= thresholds
@@ -100,8 +111,10 @@ def ranked_probability_score(
     return xr.DataArray(scores, dims=("obs", "item"), coords=coords, name="rps")
 
 
-def _scoring_inputs(result, responses, posterior, num_samples):
+def _scoring_inputs(result, responses, posterior, num_samples, batch_size):
     """Validate answers and replay posterior-averaged probabilities and labels."""
+    if isinstance(batch_size, bool) or not isinstance(batch_size, Integral) or batch_size < 1:
+        raise ValueError("batch_size must be a positive integer")
     values = np.asarray(result.responses if responses is None else responses)
     if values.shape != np.shape(result.responses):
         raise ValueError("responses must have the same shape as the fitted responses")
@@ -122,13 +135,31 @@ def _scoring_inputs(result, responses, posterior, num_samples):
             n_obs=n_obs, n_var=n_items,
         )
 
-    log_p, sample_dims = _replay_category_log_probs(model, posterior, jax.random.key(0))
-    sample_shape = log_p.shape[:len(sample_dims)]
-    if not sample_dims or not np.prod(sample_shape):
+    sample_dims = [d for d in ("chain", "draw", "sample") if d in posterior.dims]
+    sample_shape = tuple(posterior.sizes[d] for d in sample_dims)
+    n_draws = int(np.prod(sample_shape))
+    if not sample_dims or n_draws == 0:
         raise ValueError("posterior must contain nonempty sample or chain/draw dimensions")
-    log_mean_p = logsumexp(log_p, axis=tuple(range(len(sample_dims)))) - jnp.log(
-        np.prod(sample_shape)
-    )
+
+    # Select on the host before replay, so only one batch's parameters are
+    # transferred to the device. Vectorized indexing combines chain/draw into
+    # a single sample dimension without stacking the entire posterior.
+    log_total = None
+    for start in range(0, n_draws, batch_size):
+        indices = np.unravel_index(np.arange(start, min(start + batch_size, n_draws)), sample_shape)
+        batch = posterior.isel({
+            dim: xr.DataArray(index, dims="sample")
+            for dim, index in zip(sample_dims, indices)
+        })
+        log_p, batch_dims = _replay_category_log_probs(model, batch, jax.random.key(0))
+        # Transfer only the reduced sum. np.asarray waits for device work to
+        # finish before the next batch, preventing queued batches from piling up.
+        batch_total = np.asarray(logsumexp(log_p, axis=tuple(range(len(batch_dims))))).astype(np.float64)
+        log_total = batch_total if log_total is None else np.logaddexp(log_total, batch_total)
+        del log_p, batch_total, batch
+    # Weight draws equally, including a shorter final batch. Averaging scores
+    # or equally averaging batch means would give a different answer.
+    log_mean_p = log_total - np.log(n_draws)
     coords = {
         dim: np.asarray(posterior.coords.get(dim, result.coords.get(dim, np.arange(size))))
         for dim, size in (("obs", n_obs), ("item", n_items))
