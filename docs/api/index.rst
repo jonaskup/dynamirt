@@ -83,6 +83,7 @@ Scoring
 
    dynamirt.log_loss
    dynamirt.ranked_probability_score
+   dynamirt.accuracy
 
 Experimental calibration
 ------------------------
